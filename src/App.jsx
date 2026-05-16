@@ -1,7 +1,7 @@
 ﻿import React, { useEffect, useRef, useState } from 'react';
 import './App.css';
 
-// --- ANDY'S MOBILE-STABLE DFT ---
+// --- THE MASTER ALGORITHM: DISCRETE FOURIER TRANSFORM ---
 function dft(points) {
     const X = [];
     const N = points.length;
@@ -13,21 +13,23 @@ function dft(points) {
             im += points[n].y * Math.cos(phi) - points[n].x * Math.sin(phi);
         }
         re /= N; im /= N;
+        // Frequency mapping: Center the harmonics for symmetrical rotation
         let freq = k > N / 2 ? k - N : k;
         X[k] = { freq, amp: Math.sqrt(re * re + im * im), phase: Math.atan2(im, re) };
     }
     return X;
 }
 
-export default function MobileFourierEngine() {
+export default function AndyFullEngine() {
     const canvasRef = useRef(null);
-    const [mode, setMode] = useState('DRAWING'); // DRAWING, ORBITING
+    const [mode, setMode] = useState('DRAWING');
     const [showDocs, setShowDocs] = useState(false);
-    const [epicycles, setEpicycles] = useState(100);
+    const [penColor, setPenColor] = useState('#00f0ff');
+    const [animSpeed, setAnimSpeed] = useState(1);
+    const [fadeSpeed, setFadeSpeed] = useState(1);
 
     const stateRef = useRef({
-        strokes: [], currentStroke: [],
-        fourierData: [], reconstructedPath: [],
+        strokes: [], currentStroke: [], fourierData: [], reconstructedPath: [],
         time: 0, cx: 0, cy: 0
     });
 
@@ -37,7 +39,6 @@ export default function MobileFourierEngine() {
         let frameId;
 
         const resize = () => {
-            // Handle High DPI screens (Retina)
             const dpr = window.devicePixelRatio || 1;
             canvas.width = window.innerWidth * dpr;
             canvas.height = window.innerHeight * dpr;
@@ -54,160 +55,139 @@ export default function MobileFourierEngine() {
             ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
             if (mode === 'DRAWING') {
-                ctx.strokeStyle = '#00f0ff';
+                ctx.strokeStyle = penColor;
                 ctx.lineWidth = 2;
-                // Previous strokes
-                state.strokes.forEach(s => {
+                state.strokes.concat([state.currentStroke]).forEach(s => {
+                    if (s.length < 2) return;
                     ctx.beginPath();
                     ctx.moveTo(s[0].x + state.cx, s[0].y + state.cy);
                     s.forEach(p => ctx.lineTo(p.x + state.cx, p.y + state.cy));
                     ctx.stroke();
                 });
-                // Current stroke
-                if (state.currentStroke.length > 1) {
-                    ctx.beginPath();
-                    ctx.moveTo(state.currentStroke[0].x + state.cx, state.currentStroke[0].y + state.cy);
-                    state.currentStroke.forEach(p => ctx.lineTo(p.x + state.cx, p.y + state.cy));
-                    ctx.stroke();
-                }
             }
 
             if (mode === 'ORBITING') {
                 let x = state.cx; let y = state.cy;
-                const count = Math.min(state.fourierData.length, epicycles);
-
-                for (let i = 0; i < count; i++) {
+                // Logic: Iterate through all calculated harmonics
+                for (let i = 0; i < state.fourierData.length; i++) {
                     const f = state.fourierData[i];
                     const prevX = x; const prevY = y;
                     const angle = f.freq * state.time + f.phase;
                     x += f.amp * Math.cos(angle);
                     y += f.amp * Math.sin(angle);
 
-                    ctx.beginPath();
-                    ctx.arc(prevX, prevY, f.amp, 0, Math.PI * 2);
-                    ctx.strokeStyle = 'rgba(0, 240, 255, 0.1)';
-                    ctx.stroke();
-                    ctx.beginPath();
-                    ctx.moveTo(prevX, prevY); ctx.lineTo(x, y);
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-                    ctx.stroke();
+                    if (i < 70) { // Mobile performance optimization
+                        ctx.beginPath(); ctx.arc(prevX, prevY, f.amp, 0, Math.PI * 2);
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'; ctx.stroke();
+                        ctx.beginPath(); ctx.moveTo(prevX, prevY); ctx.lineTo(x, y);
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; ctx.stroke();
+                    }
                 }
 
                 state.reconstructedPath.unshift({ x, y });
-                ctx.beginPath();
-                ctx.strokeStyle = '#ff003c';
+                const maxLen = state.fourierData.length * (2 / fadeSpeed);
+                if (state.reconstructedPath.length > maxLen) state.reconstructedPath.pop();
+
+                // Path Rendering with Linear Interpolated Opacity
                 ctx.lineWidth = 3;
                 state.reconstructedPath.forEach((p, i) => {
-                    if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+                    ctx.globalAlpha = 1 - (i / state.reconstructedPath.length);
+                    ctx.strokeStyle = penColor;
+                    ctx.beginPath();
+                    if (i === 0) ctx.moveTo(p.x, p.y);
+                    else { ctx.moveTo(state.reconstructedPath[i - 1].x, state.reconstructedPath[i - 1].y); ctx.lineTo(p.x, p.y); }
+                    ctx.stroke();
                 });
-                ctx.stroke();
-
-                const dt = (Math.PI * 2) / state.fourierData.length;
-                state.time += dt;
-                if (state.reconstructedPath.length > state.fourierData.length) state.reconstructedPath.pop();
+                ctx.globalAlpha = 1.0;
+                state.time += ((Math.PI * 2) / state.fourierData.length) * animSpeed;
             }
             frameId = requestAnimationFrame(render);
         };
 
         render();
-        return () => {
-            window.removeEventListener('resize', resize);
-            cancelAnimationFrame(frameId);
-        };
-    }, [mode, epicycles]);
+        return () => { window.removeEventListener('resize', resize); cancelAnimationFrame(frameId); };
+    }, [mode, penColor, animSpeed, fadeSpeed]);
 
-    // --- MOBILE STABLE POINTER EVENTS ---
     const onPointerDown = (e) => {
-        if (mode === 'ORBITING') return;
+        if (mode === 'ORBITING' || e.target.closest('.hud-panel')) return;
         const canvas = canvasRef.current;
-        canvas.setPointerCapture(e.pointerId); // Essential for mobile stability
-        const state = stateRef.current;
-        state.currentStroke = [{ x: e.clientX - state.cx, y: e.clientY - state.cy }];
+        canvas.setPointerCapture(e.pointerId);
+        stateRef.current.currentStroke = [{ x: e.clientX - stateRef.current.cx, y: e.clientY - stateRef.current.cy }];
     };
 
     const onPointerMove = (e) => {
-        const state = stateRef.current;
-        if (canvasRef.current.hasPointerCapture(e.pointerId)) {
-            state.currentStroke.push({ x: e.clientX - state.cx, y: e.clientY - state.cy });
+        if (canvasRef.current?.hasPointerCapture(e.pointerId)) {
+            stateRef.current.currentStroke.push({ x: e.clientX - stateRef.current.cx, y: e.clientY - stateRef.current.cy });
         }
     };
 
     const onPointerUp = (e) => {
-        const canvas = canvasRef.current;
-        if (canvas.hasPointerCapture(e.pointerId)) {
-            canvas.releasePointerCapture(e.pointerId);
-            const state = stateRef.current;
-            if (state.currentStroke.length > 2) {
-                state.strokes.push([...state.currentStroke]);
-            }
-            state.currentStroke = [];
-        }
+        canvasRef.current?.releasePointerCapture(e.pointerId);
+        if (stateRef.current.currentStroke.length > 2) stateRef.current.strokes.push([...stateRef.current.currentStroke]);
+        stateRef.current.currentStroke = [];
     };
 
     const handleRun = () => {
         const state = stateRef.current;
         if (state.strokes.length === 0) return;
-
-        // Flatten and interpolate jump lines
-        let fullPath = [];
+        let path = [];
         state.strokes.forEach((s, idx) => {
-            fullPath = fullPath.concat(s);
-            // Interpolate to next stroke start
+            path = path.concat(s);
             const next = state.strokes[(idx + 1) % state.strokes.length][0];
             const last = s[s.length - 1];
-            for (let i = 1; i <= 10; i++) {
-                fullPath.push({
-                    x: last.x + (next.x - last.x) * (i / 10),
-                    y: last.y + (next.y - last.y) * (i / 10)
-                });
-            }
+            for (let i = 1; i <= 5; i++) path.push({ x: last.x + (next.x - last.x) * (i / 5), y: last.y + (next.y - last.y) * (i / 5) });
         });
-
-        state.fourierData = dft(fullPath).sort((a, b) => b.amp - a.amp);
-        state.time = 0;
-        state.reconstructedPath = [];
-        setMode('ORBITING');
+        state.fourierData = dft(path).sort((a, b) => b.amp - a.amp);
+        state.time = 0; state.reconstructedPath = []; setMode('ORBITING');
     };
 
     return (
         <div className="app-container">
-            <canvas
-                ref={canvasRef}
-                className="fourier-canvas"
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-            />
-
+            <canvas ref={canvasRef} className="fourier-canvas" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
             <div className="hud-panel">
-                <div className="btn-group">
-                    <button className="btn" onClick={() => { stateRef.current.strokes = []; setMode('DRAWING'); }}>Clear</button>
-                    {mode === 'DRAWING' ? (
-                        <button className="btn btn-run" onClick={handleRun}>Run</button>
-                    ) : (
-                        <button className="btn btn-run" onClick={() => setMode('DRAWING')}>Edit</button>
-                    )}
-                    <button className="btn btn-andy" onClick={() => setShowDocs(true)}>Andy's Code</button>
+                <div className="controls-grid">
+                    <div className="control-item"><label>Pen</label><input type="color" value={penColor} onChange={e => setPenColor(e.target.value)} /></div>
+                    <div className="control-item"><label>Speed</label><input type="range" min="0.1" max="3" step="0.1" value={animSpeed} onChange={e => setAnimSpeed(parseFloat(e.target.value))} /></div>
+                    <div className="control-item"><label>Fade</label><input type="range" min="0.2" max="2" step="0.1" value={fadeSpeed} onChange={e => setFadeSpeed(parseFloat(e.target.value))} /></div>
+                    <div className="control-item" style={{ justifyContent: 'center' }}><button className="btn btn-andy" onClick={() => setShowDocs(true)}>Andy's Code</button></div>
                 </div>
-                {mode === 'ORBITING' && (
-                    <input type="range" className="slider" min="1" max={stateRef.current.fourierData.length} value={epicycles} onChange={(e) => setEpicycles(e.target.value)} />
-                )}
+                <div className="btn-group">
+                    <button className="btn" onClick={() => { stateRef.current.strokes = []; stateRef.current.reconstructedPath = []; setMode('DRAWING'); }}>Clear</button>
+                    <button className="btn btn-run" onClick={handleRun}>Run Engine</button>
+                </div>
             </div>
 
             <div className={`modal-overlay ${showDocs ? 'active' : ''}`} onClick={() => setShowDocs(false)}>
-                <div className="modal-content">
-                    <h2>Andy's Mobile Engine</h2>
-                    <pre className="code-block">
-                        {`// Mobile Optimized Pointer Capture
-canvas.setPointerCapture(e.pointerId);
+                <div className="modal-content" onClick={e => e.stopPropagation()}>
+                    <h2>The Fourier Architecture</h2>
+                    <p>The system uses a <strong>Discrete Fourier Transform (DFT)</strong> to map spatial temporal points into the complex frequency domain.</p>
 
-// The Core DFT
-for (let k = 0; k < N; k++) {
-  // ... Complex Math ...
-  let freq = k > N / 2 ? k - N : k;
+                    <h3>1. Signal Decomposition</h3>
+                    <pre className="code-block">
+                        {`// Transforms spatial (x,y) into frequency components
+function dft(points) {
+  // ... loop k frequencies through n points
+  const phi = (2 * PI * k * n) / N;
+  re += x * cos(phi) + y * sin(phi);
+  im += y * cos(phi) - x * sin(phi);
+  // Amplitude: Strength of the circle
+  // Phase: Starting angle of the circle
 }`}
                     </pre>
-                    <button className="btn" style={{ marginTop: '1rem' }}>Close</button>
+
+                    <h3>2. Multi-Stroke Interpolation</h3>
+                    <p>Disjointed paths are woven into a single periodic loop by calculating "null-space vectors" between the end of stroke <em>n</em> and the start of stroke <em>n+1</em>.</p>
+
+                    <h3>3. Temporal Decay & Memory</h3>
+                    <pre className="code-block">
+                        {`// Maintains a 'Health' for every rendered point
+state.reconstructedPath.unshift({ x, y });
+if (path.length > maxLen) path.pop();
+
+// Rendering with Alpha Gradient
+ctx.globalAlpha = 1 - (index / totalPoints);`}
+                    </pre>
+                    <button className="btn" style={{ marginTop: '1rem' }} onClick={() => setShowDocs(false)}>Close</button>
                 </div>
             </div>
         </div>
